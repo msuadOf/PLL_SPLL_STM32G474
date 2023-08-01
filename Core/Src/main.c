@@ -74,18 +74,12 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-float o_Vol, i_Vol, i_Cur, i_Cur_ref, k;
-float o_Vol_index=0;;
-float HB_duty;
+
+float HB_duty=0.2;
 uint16_t ADC_Value[4] = {0};
 uint16_t DAC_Value = 0;
-float y0;
-float y1;
-float sinf_out;
 
-float sin_Phase_det = -2.65;
 
-float pll_sine;
 
 uint32_t ARR;
 
@@ -154,68 +148,6 @@ inline float pid_process_o_Vol(PID_t *S, float aim, float current)
   return (out);
 }
 
-// PR_t
-#define pr_PI 3.141592654f
-typedef struct
-{
-  float Kp;
-  float Kr;
-  float wo;
-  float wc;
-  float Ts;
-  float A0, A1, A2, B0, B1, B2;
-  float vo, vo_1, vo_2;
-  float vi, vi_1, vi_2;
-	float temp;
-} PR_t;
-
-PR_t pr_i_Cur = {
-    .Kp = 10.0f,
-    .Kr = 3000.0f,
-    .wo = 50 * 2 * pr_PI,
-    .wc = pr_PI,
-    .Ts = 1 / PR_ISR_FREQ};
-
-void PR_init(PR_t *p,float Kp,float Kr,float Ts,float wc, float wo)
-{
-    float temp = 0;
-    p->Ts=Ts;
-    p->Kp=Kp;
-    p->Kr=Kr;
-    p->wc=wc;
-    p->wo=wo;
-    temp = 4 / p->Ts / p->Ts + 4 * p->wc / p->Ts + p->wo * p->wo;
-
-    p->B0 = (4 * p->Kp / p->Ts / p->Ts + 4 * p->wc * (p->Kp + p->Kr) / p->Ts
-            + p->Kp * p->wo * p->wo) / temp;
-    p->B1 = (-8 * p->Kp / p->Ts / p->Ts + 2 * p->Kp * p->wo * p->wo) / temp;
-    p->B2 = (4 * p->Kp / p->Ts / p->Ts - 4 * p->wc / p->Ts * (p->Kp + p->Kr)
-            + p->Kp * p->wo * p->wo) / temp;
-    p->A1 = (-8 / p->Ts / p->Ts + 2 * p->wo * p->wo) / temp;
-    p->A2 = (4 / p->Ts / p->Ts - 4 * p->wc / p->Ts + p->wo * p->wo) / temp;
-    /*PRpr;
-     * ????
-     * y[n]+A1[n-1]+A2[n-2]=B0x[n]+B1x[n-1]+B2[n-2]
-     */
-}
-
-inline float PR_process_i_Cur(PR_t *p, float aim, float cur)
-{
-  p->vi = aim - cur;
-  p->vo = -p->A1 * p->vo_1 - p->A2 * p->vo_2 + p->B0 * p->vi + p->B1 * p->vi_1 + p->B2 * p->vi_2;
-
-  // update and store
-  p->vo_2 = p->vo_1;
-  p->vo_1 = p->vo;
-  p->vi_2 = p->vi_1;
-  p->vi_1 = p->vi;
-
-	float out=CLAMP(p->vo, 99, -99);
-	return out;
-//  p->vo = CLAMP(p->vo, 99, -99);
-//  return p->vo;
-}
-
 int UART_printf(UART_HandleTypeDef *huart, const char *fmt, ...)
 {
   va_list ap;
@@ -223,7 +155,7 @@ int UART_printf(UART_HandleTypeDef *huart, const char *fmt, ...)
   int length;
   char buffer[128];
   length = vsnprintf(buffer, 128, fmt, ap);
-  HAL_UART_Transmit(huart, buffer, length, HAL_MAX_DELAY); // HAL_MAX_DELAY
+  HAL_UART_Transmit(huart, (uint8_t *)buffer, length, HAL_MAX_DELAY); // HAL_MAX_DELAY
   //    CDC_Transmit_FS((uint8_t*)buffer,length);
   va_end(ap);
   return length;
@@ -231,9 +163,9 @@ int UART_printf(UART_HandleTypeDef *huart, const char *fmt, ...)
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -266,6 +198,8 @@ int main(void)
   MX_HRTIM1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  UART_printf(&huart1,"=== MCU Peripheral turn on ===\n");
+
   HAL_Delay(1000);
 
   HAL_TIM_Base_Start(&htim3);
@@ -274,13 +208,12 @@ int main(void)
   // HAL_DAC_Start_DMA(&hdac1,DAC_CHANNEL_1,(uint32_t *)&DAC_Value,1,DAC_ALIGN_12B_R);
   HAL_DAC_Start(&hdac1, DAC_CHANNEL_1);
 
-  spll_Start_wrapper();
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  PR_init(&pr_i_Cur,10,200000,0.00002,pr_PI*0.5,50 * 2 * pr_PI);
+
 
   ARR = (hhrtim1.Instance->sTimerxRegs[0].PERxR);
 
@@ -297,10 +230,11 @@ int main(void)
   HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
   hhrtim1.Instance->sTimerxRegs[1].CMP1xR = (int)(0.5f * (hhrtim1.Instance->sTimerxRegs[1].PERxR));
 
-  HAL_GPIO_WritePin(check_GPIO_Port, check_Pin, 1);
+  HAL_GPIO_WritePin(check_GPIO_Port, check_Pin, 0);
   while (1)
   {
-    UART_printf(&huart1, "i_cur:%f,%f,%f,%f,%f,%f\n", i_Cur, HB_duty, i_Vol, o_Vol, k,i_Cur_ref);
+    UART_printf(&huart1,"=== MCU working ===\n");
+    //UART_printf(&huart1, "i_cur:%f,%f,%f,%f,%f,%f\n", i_Cur, HB_duty, i_Vol, o_Vol, k,i_Cur_ref);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -309,21 +243,21 @@ int main(void)
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-   */
+  */
   HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -339,8 +273,9 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
@@ -359,46 +294,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   float ac_value;
   if (hadc->Instance == ADC1)
   {
-    ac_value = (ADC_Value[0] * 3.3f / 4095.0f - 1.65f);
 
-    i_Vol = ac_value;
-    // i_Cur  1A
-    i_Cur = -((ADC_Value[1] * 3.3f / 4095.0f - 1.580f) * 1 / 0.25);
-    // i_Cur=((ADC_Value[1]*3.3f/4095.0f-1.580f));
-    // i_Cur=(ADC_Value[1]*3.3f/4095.0f);
-    // i_Cur=(ADC_Value[1]*3.3f/4095.0f-1.65f)*1/250+1;
-    o_Vol = ADC_Value[2] * 3.3f / 4095.0f * 10.0f;
-
-    spll_Outputs_wrapper(&ac_value, &y0, &y1, &sinf_out);
-
-    // DAC_Value=(sinf_out+1)/2*4095.0f;
-
-    // PLL
-    pll_sine = ((float32_t)arm_sin_f32(spll1.theta + (sin_Phase_det * 2 * PI / 360.0)));
-    DAC_Value = (pll_sine + 1) / 2 * 4095.0f;
-    // DAC_Value=(spll1.theta)/2/3.14159265f*4095.0f;
-
-    // o_Vol PID loop
-		if(o_Vol_index>=10000){
-			o_Vol_index=0;
-			k = -pid_process_o_Vol(&pid_o_Vol, 10, o_Vol);
-		}else{
-			o_Vol_index++;
-		}
-    
-    //k = -2;
-
-    // i_Cur
-    i_Cur_ref = k * pll_sine;
-    // i_Cur_ref=k*(pll_sine+1)/2;
-    // i_Cur_ref=-1.5;
-
-    /* i_cur PR ver */
-    HB_duty = (PR_process_i_Cur(&pr_i_Cur, i_Cur_ref, i_Cur) + 100) / 200.0f;
-    /* i_cur PID ver */
-    //HB_duty = (pid_process_i_Cur(&pid_i_Cur, i_Cur_ref, i_Cur) + 100) / 200.0f;
-    // HB_duty=(pid_process_i_Cur(&pid_i_Cur,i_Cur_ref,i_Cur))/100.0f;
-    // HB_duty=pid_process_o_Vol(&pid_o_Vol,10,o_Vol)/100.0f;
 
     hhrtim1.Instance->sTimerxRegs[0].CMP1xR = (int)((HB_duty) * (hhrtim1.Instance->sTimerxRegs[0].PERxR));
     hhrtim1.Instance->sTimerxRegs[1].CMP1xR = (int)((HB_duty) * (hhrtim1.Instance->sTimerxRegs[1].PERxR));
@@ -410,9 +306,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -424,14 +320,14 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
